@@ -6,6 +6,7 @@ CRM/order/ticketing system for the demo.
 """
 
 import json
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -22,7 +23,21 @@ with open(DATA_DIR / "tickets.json") as f:
     _TICKETS = json.load(f)
 
 _CUSTOMERS_BY_ACCOUNT = {c["account_number"]: c for c in _CUSTOMERS}
-_CUSTOMERS_BY_PHONE = {c["phone_number"]: c for c in _CUSTOMERS}
+
+
+def _normalize_phone(phone: str) -> str:
+    """Last 10 digits, so +1-555-123-4567 / (555) 123-4567 / 5551234567 /
+    STT output without a leading '+' all match the same record."""
+    return re.sub(r"\D", "", phone)[-10:]
+
+
+def _normalize_account(account: str) -> str:
+    """Case/dash/space-insensitive, so "acc 10234" or "ACC10234" still match."""
+    return re.sub(r"[^A-Za-z0-9]", "", account).upper()
+
+
+_CUSTOMERS_BY_PHONE_NORM = {_normalize_phone(c["phone_number"]): c for c in _CUSTOMERS}
+_CUSTOMERS_BY_ACCOUNT_NORM = {_normalize_account(c["account_number"]): c for c in _CUSTOMERS}
 
 
 def list_customers() -> list[dict]:
@@ -31,11 +46,19 @@ def list_customers() -> list[dict]:
 
 
 def find_customer(phone_number: Optional[str] = None, account_number: Optional[str] = None) -> Optional[dict]:
-    """Look up a customer record by phone number or account number."""
-    if account_number and account_number in _CUSTOMERS_BY_ACCOUNT:
-        return _CUSTOMERS_BY_ACCOUNT[account_number]
-    if phone_number and phone_number in _CUSTOMERS_BY_PHONE:
-        return _CUSTOMERS_BY_PHONE[phone_number]
+    """Look up a customer record by phone number or account number.
+
+    Both are matched loosely (digits-only for phone, alphanumeric-only for
+    account) since real callers/STT never produce the exact stored format.
+    """
+    if account_number:
+        match = _CUSTOMERS_BY_ACCOUNT_NORM.get(_normalize_account(account_number))
+        if match:
+            return match
+    if phone_number:
+        match = _CUSTOMERS_BY_PHONE_NORM.get(_normalize_phone(phone_number))
+        if match:
+            return match
     return None
 
 

@@ -80,6 +80,7 @@ def _select_tts():
 @dataclass
 class CallState:
     account_number: str | None = None
+    customer_info: dict | None = None
 
 
 class Orchestrator(Agent):
@@ -95,16 +96,23 @@ class Orchestrator(Agent):
         phone_number: str | None = None,
         account_number: str | None = None,
     ) -> dict:
-        """Look up the caller by phone number or account number.
+        """Look up the caller by phone number or account number — not by name.
 
-        Call this first, before any expert tool, once the caller provides
-        either one.
+        Call this first, before any expert tool, once the caller provides a
+        phone or account number. If they've only given their name, ask for
+        one of those instead of guessing. Already identified this call?
+        Don't call this again — you already have their info.
         """
+        if context.userdata.account_number:
+            trace("orchestrator.identify_customer", note="already identified, skipped re-lookup", account_number=context.userdata.account_number)
+            return context.userdata.customer_info
+
         result = await mcp_client.call_tool(
             "identify_customer", {"phone_number": phone_number, "account_number": account_number}
         )
         if result.get("found"):
             context.userdata.account_number = result["account_number"]
+            context.userdata.customer_info = result
         trace("orchestrator.identify_customer", phone_number=phone_number, account_number=account_number, result=result)
         return result
 
@@ -160,7 +168,22 @@ async def entrypoint(ctx: JobContext) -> None:
         llm=_select_llm(),
         tts=_select_tts(),
         vad=silero.VAD.load(),
-        turn_detection=MultilingualModel(),
+        turn_handling={
+            "turn_detection": MultilingualModel(),
+            # Defense against acoustic echo: without headphones, the agent's
+            # own TTS played through speakers can leak into the mic and get
+            # misread as the caller talking — the round trip is way longer
+            # than browser-native echo cancellation is designed to track, so
+            # it can't cancel it. This doesn't fix that (headphones do); it
+            # makes a stray echo blip less likely to register as a real
+            # interruption, and recovers cleanly when one slips through.
+            "interruption": {
+                "mode": "adaptive",  # ML-based, not raw VAD energy
+                "min_words": 2,  # STT must have actually heard words
+                "resume_false_interruption": True,  # already the default; explicit since it's exactly this scenario
+                "false_interruption_timeout": 2.0,
+            },
+        },
     )
 
     await session.start(agent=Orchestrator(), room=ctx.room)
@@ -173,6 +196,7 @@ async def entrypoint(ctx: JobContext) -> None:
         trace("orchestrator.identify_customer", account_number=account_number, result=result, source="room_name")
         if result.get("found"):
             session.userdata.account_number = result["account_number"]
+            session.userdata.customer_info = result
             await session.generate_reply(
                 instructions=(
                     f"Greet the caller warmly by name ({result['name']}) as Alex from Nestly "

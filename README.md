@@ -167,3 +167,17 @@ voice pipeline itself, not the Orchestrator's delegation decisions or what
 each expert reasoned through, which is what this custom tracing is for. If
 you also want voice-pipeline latency metrics later, LiveKit's built-in
 telemetry is additive on top of this, not a replacement for it.
+
+## Known issue: use headphones when testing
+
+Without headphones, the agent's own TTS played through your speakers can
+leak into your mic and get misread as you talking — symptoms: the agent's
+voice sounding glitchy/distorted, or the agent repeatedly interrupting
+itself and responding to nothing. Browser echo cancellation is on by
+default but can't cancel this: it's built for near-instant local loopback,
+not the full STT→LLM→TTS round trip a server-side voice agent involves.
+
+`agent/main.py`'s `turn_handling.interruption` config (`mode: "adaptive"`,
+`min_words: 2`, `resume_false_interruption`) makes a stray echo blip less
+likely to be mistaken for a real interruption and recovers when one slips
+through anyway — but headphones are the actual fix, not this.
