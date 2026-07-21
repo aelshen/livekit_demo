@@ -2,7 +2,68 @@
 
 A voice-based customer support agent for a fictional smart-home company
 (thermostats, cameras, locks, sensors + cloud storage subscription). See
-[ARCHITECTURE.md](./ARCHITECTURE.md) for the design.
+[ARCHITECTURE.md](./ARCHITECTURE.md) for the full design writeup.
+
+## System diagram
+
+```mermaid
+flowchart TB
+    Browser["Browser UI<br/>customer picker · call · live trace"]
+
+    subgraph Frontend["frontend/ (FastAPI, :8090)"]
+        API["customers + token API"]
+        SSE["trace SSE stream"]
+    end
+
+    Room(("LiveKit Room"))
+
+    subgraph Worker["agent/ — LiveKit Agent Worker"]
+        direction LR
+        STT["STT"] --> Orchestrator["Orchestrator<br/>Claude Sonnet"] --> TTS["TTS"]
+    end
+
+    subgraph Experts["Expert sub-agents"]
+        direction LR
+        CustomerExpert["Customer Expert"]
+        CommerceExpert["Commerce Expert"]
+        DeviceExpert["Device Expert"]
+    end
+
+    subgraph Backend["mcp_server/ — FastMCP, :8089"]
+        Tools[("MCP tools")]
+        Data[("mock data<br/>customers · orders · tickets · docs")]
+        Tools --> Data
+    end
+
+    Browser <-->|WebRTC audio| Room
+    Browser <-->|HTTP + SSE| Frontend
+    API -.->|mints token for| Room
+    Room <--> STT
+    TTS --> Room
+
+    Orchestrator -->|ask_customer_expert| CustomerExpert
+    Orchestrator -->|ask_commerce_expert| CommerceExpert
+    Orchestrator -->|ask_device_expert| DeviceExpert
+
+    Orchestrator -.->|identify_customer, log_handoff_summary| Tools
+    CustomerExpert --> Tools
+    CommerceExpert --> Tools
+    DeviceExpert --> Tools
+    Orchestrator -.->|writes trace| SSE
+
+    classDef orch fill:#5b8def,color:#fff,stroke:#3a63c4,stroke-width:2px
+    classDef expert fill:#3fb27f,color:#fff,stroke:#2c8c62,stroke-width:2px
+    classDef data fill:#d9a441,color:#1a1a1a,stroke:#a97e2f,stroke-width:2px
+    class Orchestrator orch
+    class CustomerExpert,CommerceExpert,DeviceExpert expert
+    class Tools,Data data
+```
+
+The Orchestrator is the only voice/persona on the call. It never sees the
+Experts' underlying tools — it hands off a plain-language question and gets
+back a synthesized answer, so each Expert independently decides which MCP
+tools to call. That delegation boundary is what makes this a real
+orchestrator-workers system rather than one agent with a flat tool list.
 
 ## Layout
 
