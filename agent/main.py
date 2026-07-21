@@ -29,6 +29,7 @@ Then run this worker in dev mode (connects to LiveKit Agents Playground):
 """
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,10 +40,23 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from agent import mcp_client
 from agent.experts import COMMERCE_EXPERT, CUSTOMER_EXPERT, DEVICE_EXPERT, run_expert
+from agent.tracing import trace
 
 load_dotenv()
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
+
+# frontend/server.py names rooms "support-{account_number}-{8 hex chars}"
+# when the demo console's customer picker starts a call (account_number
+# itself may contain hyphens, e.g. "ACC-10234", hence anchoring on the fixed
+# -length hex suffix rather than splitting on the first "-"), so the caller
+# can be auto-identified instead of having to say their account number aloud.
+ROOM_ACCOUNT_RE = re.compile(r"^support-(?P<account_number>.+)-[0-9a-f]{8}$")
+
+
+def _account_number_from_room_name(name: str) -> str | None:
+    match = ROOM_ACCOUNT_RE.match(name)
+    return match.group("account_number") if match else None
 
 
 def _select_stt():
@@ -91,22 +105,32 @@ class Orchestrator(Agent):
         )
         if result.get("found"):
             context.userdata.account_number = result["account_number"]
+        trace("orchestrator.identify_customer", phone_number=phone_number, account_number=account_number, result=result)
         return result
 
     @function_tool()
     async def ask_customer_expert(self, context: RunContext[CallState], question: str) -> str:
         """Delegate an account profile, subscription status, or registered-devices question to the Customer Expert sub-agent."""
-        return await run_expert(CUSTOMER_EXPERT, question, context.userdata.account_number)
+        trace("orchestrator.delegate", expert="customer", question=question, account_number=context.userdata.account_number)
+        answer = await run_expert(CUSTOMER_EXPERT, question, context.userdata.account_number)
+        trace("orchestrator.delegate_result", expert="customer", answer=answer)
+        return answer
 
     @function_tool()
     async def ask_commerce_expert(self, context: RunContext[CallState], question: str) -> str:
         """Delegate an order history or order status question to the Commerce Expert sub-agent."""
-        return await run_expert(COMMERCE_EXPERT, question, context.userdata.account_number)
+        trace("orchestrator.delegate", expert="commerce", question=question, account_number=context.userdata.account_number)
+        answer = await run_expert(COMMERCE_EXPERT, question, context.userdata.account_number)
+        trace("orchestrator.delegate_result", expert="commerce", answer=answer)
+        return answer
 
     @function_tool()
     async def ask_device_expert(self, context: RunContext[CallState], question: str) -> str:
         """Delegate a device status or troubleshooting question to the Device Expert sub-agent."""
-        return await run_expert(DEVICE_EXPERT, question, context.userdata.account_number)
+        trace("orchestrator.delegate", expert="device", question=question, account_number=context.userdata.account_number)
+        answer = await run_expert(DEVICE_EXPERT, question, context.userdata.account_number)
+        trace("orchestrator.delegate_result", expert="device", answer=answer)
+        return answer
 
     @function_tool()
     async def log_handoff_summary(self, context: RunContext[CallState], reason: str, summary: str) -> dict:
@@ -115,7 +139,7 @@ class Orchestrator(Agent):
         Summarize the call yourself first (what the customer needed, what
         you found, what's unresolved) and pass that as `summary`.
         """
-        return await mcp_client.call_tool(
+        result = await mcp_client.call_tool(
             "log_handoff_summary",
             {
                 "account_number": context.userdata.account_number or "unknown",
@@ -123,6 +147,8 @@ class Orchestrator(Agent):
                 "summary": summary,
             },
         )
+        trace("orchestrator.handoff", reason=reason, summary=summary, account_number=context.userdata.account_number)
+        return result
 
 
 async def entrypoint(ctx: JobContext) -> None:
@@ -138,6 +164,23 @@ async def entrypoint(ctx: JobContext) -> None:
     )
 
     await session.start(agent=Orchestrator(), room=ctx.room)
+
+    # If the demo console's customer picker started this call, the account is
+    # already known — skip the identification step and greet by name.
+    account_number = _account_number_from_room_name(ctx.room.name)
+    if account_number:
+        result = await mcp_client.call_tool("identify_customer", {"account_number": account_number})
+        trace("orchestrator.identify_customer", account_number=account_number, result=result, source="room_name")
+        if result.get("found"):
+            session.userdata.account_number = result["account_number"]
+            await session.generate_reply(
+                instructions=(
+                    f"Greet the caller warmly by name ({result['name']}) as Alex from Nestly "
+                    "Home support. They're already identified via the demo console, so don't "
+                    "ask for a phone or account number — just ask how you can help."
+                )
+            )
+            return
 
     # Greet first — a support call shouldn't require the customer to speak first.
     await session.generate_reply(

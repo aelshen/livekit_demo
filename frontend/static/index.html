@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nestly Home Support — Demo Console</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <h1>Nestly Home</h1>
+      <p class="subtitle">Pick a customer, then start a call</p>
+      <div id="customer-list" class="customer-list">Loading customers…</div>
+    </aside>
+
+    <main class="main">
+      <section class="call-panel">
+        <div id="customer-detail" class="customer-detail">
+          <p class="empty">Select a customer on the left to see their account, then start a call as them.</p>
+        </div>
+        <div class="call-controls">
+          <button id="call-btn" disabled>Start Call</button>
+          <span id="call-status" class="status">idle</span>
+        </div>
+      </section>
+
+      <section class="trace-panel">
+        <h2>Live trace <span class="trace-hint">(orchestrator delegations + expert tool calls)</span></h2>
+        <div id="trace-log" class="trace-log"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="https://unpkg.com/livekit-client@2.20.2/dist/livekit-client.umd.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

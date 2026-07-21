@@ -27,6 +27,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
 from agent.mcp_client import MCP_SERVER_URL
+from agent.tracing import trace
 
 PROVIDER = "anthropic" if os.environ.get("ANTHROPIC_API_KEY") else "openai"
 EXPERT_MODEL = os.environ.get("EXPERT_MODEL") or (
@@ -121,6 +122,8 @@ async def run_expert(config: ExpertConfig, question: str, account_number: str | 
     if account_number:
         prompt += f"\nThe caller's account number is {account_number}."
 
+    trace("expert.start", expert=config.name, question=question, account_number=account_number, provider=PROVIDER, model=EXPERT_MODEL)
+
     async with streamablehttp_client(MCP_SERVER_URL) as (read, write, _):
         async with ClientSession(read, write) as session:
             await session.initialize()
@@ -131,7 +134,9 @@ async def run_expert(config: ExpertConfig, question: str, account_number: str | 
             else:
                 answer = await _run_openai_loop(config, prompt, all_tools, session)
 
-    return answer or f"The {config.name} couldn't reach a conclusive answer in time."
+    answer = answer or f"The {config.name} couldn't reach a conclusive answer in time."
+    trace("expert.answer", expert=config.name, answer=answer)
+    return answer
 
 
 async def _run_anthropic_loop(config: ExpertConfig, prompt: str, tools, session: ClientSession) -> str | None:
@@ -159,6 +164,7 @@ async def _run_anthropic_loop(config: ExpertConfig, prompt: str, tools, session:
                 continue
             result = await session.call_tool(block.name, block.input)
             result_text = "".join(c.text for c in result.content if c.type == "text")
+            trace("expert.tool_call", expert=config.name, tool=block.name, args=block.input, result=result_text)
             tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": result_text})
         messages.append({"role": "user", "content": tool_results})
 
@@ -196,6 +202,7 @@ async def _run_openai_loop(config: ExpertConfig, prompt: str, tools, session: Cl
             args = json.loads(tool_call.function.arguments or "{}")
             result = await session.call_tool(tool_call.function.name, args)
             result_text = "".join(c.text for c in result.content if c.type == "text")
+            trace("expert.tool_call", expert=config.name, tool=tool_call.function.name, args=args, result=result_text)
             messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": result_text})
 
     return None

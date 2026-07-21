@@ -25,6 +25,11 @@ _CUSTOMERS_BY_ACCOUNT = {c["account_number"]: c for c in _CUSTOMERS}
 _CUSTOMERS_BY_PHONE = {c["phone_number"]: c for c in _CUSTOMERS}
 
 
+def list_customers() -> list[dict]:
+    """All customer profiles (no orders/tickets — join those separately)."""
+    return list(_CUSTOMERS)
+
+
 def find_customer(phone_number: Optional[str] = None, account_number: Optional[str] = None) -> Optional[dict]:
     """Look up a customer record by phone number or account number."""
     if account_number and account_number in _CUSTOMERS_BY_ACCOUNT:

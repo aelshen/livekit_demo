@@ -1,0 +1,12 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.git/
+.gitignore
+logs/
+.env
+.pytest_cache/
+.DS_Store
+.playwright-mcp/
+*.png

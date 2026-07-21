@@ -22,3 +22,8 @@ anthropic
 openai
 
 python-dotenv
+
+# frontend/server.py — the demo console (customer picker + call + live trace)
+fastapi
+uvicorn[standard]
+livekit-api

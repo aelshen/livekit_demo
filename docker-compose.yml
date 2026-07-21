@@ -1,0 +1,42 @@
+services:
+  mcp-server:
+    build: .
+    command: ["python", "-m", "mcp_server.server", "--http", "--port", "8089"]
+    ports:
+      - "8089:8089"
+    volumes:
+      # Live-editable mock data + a host-visible handoff_log.json, without a rebuild.
+      - ./mcp_server/data:/app/mcp_server/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8089), 2)"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  agent:
+    build: .
+    command: ["python", "-m", "agent.main", "start"]
+    env_file: .env
+    environment:
+      # Override the localhost default — reach the MCP server by service name.
+      MCP_SERVER_URL: http://mcp-server:8089/mcp
+    depends_on:
+      mcp-server:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+
+  frontend:
+    build: .
+    command: ["python", "-m", "frontend.server"]
+    env_file: .env
+    environment:
+      MCP_SERVER_URL: http://mcp-server:8089/mcp
+    ports:
+      - "8090:8090"
+    depends_on:
+      mcp-server:
+        condition: service_healthy
+    volumes:
+      - ./mcp_server/data:/app/mcp_server/data:ro
+      - ./logs:/app/logs

@@ -13,5 +13,10 @@ venv/
 .idea/
 .vscode/
 
-# Mock handoff records generated at runtime
+# Mock handoff records and call traces generated at runtime
 mcp_server/data/handoff_log.json
+logs/
+
+# Local testing/tooling cruft
+.playwright-mcp/
+*.png
