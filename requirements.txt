@@ -1,0 +1,24 @@
+# LiveKit Agents SDK + plugins used by agent/main.py (the realtime voice loop)
+# Verify current versions against https://docs.livekit.io (the livekit-docs
+# MCP server added to this project can look this up directly).
+livekit-agents~=1.5
+livekit-plugins-deepgram~=1.5
+livekit-plugins-cartesia~=1.5
+livekit-plugins-silero~=1.5
+livekit-plugins-anthropic~=1.5
+livekit-plugins-turn-detector~=1.5
+# Fallback STT/LLM/TTS provider when DEEPGRAM_API_KEY/ANTHROPIC_API_KEY/
+# CARTESIA_API_KEY aren't set — only OPENAI_API_KEY is then required.
+livekit-plugins-openai~=1.5
+
+# MCP server (mcp_server/) + MCP client used directly by agent/mcp_client.py
+# and agent/experts.py (official MCP Python SDK, FastMCP)
+mcp~=1.0
+
+# Direct SDK calls for the domain expert sub-agents (agent/experts.py) — separate
+# from the livekit-plugins-* above, which only drive the realtime voice loop.
+# Anthropic is preferred; openai is the fallback when ANTHROPIC_API_KEY isn't set.
+anthropic
+openai
+
+python-dotenv

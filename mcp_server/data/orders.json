@@ -1,0 +1,71 @@
+{
+  "ACC-10234": [
+    {
+      "order_id": "ORD-88213",
+      "item": "Smart Thermostat (3rd Gen)",
+      "quantity": 1,
+      "status": "delivered",
+      "order_date": "2023-03-10",
+      "delivered_date": "2023-03-18",
+      "tracking_number": "1Z999AA10123456784"
+    },
+    {
+      "order_id": "ORD-91567",
+      "item": "Outdoor Camera - 2 Pack",
+      "quantity": 1,
+      "status": "delivered",
+      "order_date": "2024-11-02",
+      "delivered_date": "2024-11-06",
+      "tracking_number": "1Z999AA10234567891"
+    },
+    {
+      "order_id": "ORD-97432",
+      "item": "Smart Lock Pro",
+      "quantity": 1,
+      "status": "shipped",
+      "order_date": "2026-07-15",
+      "estimated_delivery": "2026-07-22",
+      "tracking_number": "1Z999AA10987654321"
+    }
+  ],
+  "ACC-58821": [
+    {
+      "order_id": "ORD-90210",
+      "item": "Starter Kit (Thermostat + Camera)",
+      "quantity": 1,
+      "status": "delivered",
+      "order_date": "2024-10-28",
+      "delivered_date": "2024-11-05",
+      "tracking_number": "1Z999AA10345678912"
+    }
+  ],
+  "ACC-30456": [
+    {
+      "order_id": "ORD-55012",
+      "item": "Smart Lock",
+      "quantity": 1,
+      "status": "delivered",
+      "order_date": "2022-09-01",
+      "delivered_date": "2022-09-09",
+      "tracking_number": "1Z999AA10456789123"
+    },
+    {
+      "order_id": "ORD-55013",
+      "item": "Water Leak Sensor",
+      "quantity": 1,
+      "status": "delivered",
+      "order_date": "2022-09-01",
+      "delivered_date": "2022-09-09",
+      "tracking_number": "1Z999AA10456789124"
+    },
+    {
+      "order_id": "ORD-99871",
+      "item": "Replacement Thermostat Faceplate",
+      "quantity": 1,
+      "status": "returned",
+      "order_date": "2026-06-01",
+      "return_date": "2026-06-14",
+      "return_reason": "Wrong color ordered"
+    }
+  ]
+}

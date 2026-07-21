@@ -1,0 +1,17 @@
+# Secrets — never commit your real keys
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# OS / editor cruft
+.DS_Store
+.idea/
+.vscode/
+
+# Mock handoff records generated at runtime
+mcp_server/data/handoff_log.json

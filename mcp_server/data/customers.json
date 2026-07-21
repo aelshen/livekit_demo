@@ -1,0 +1,151 @@
+[
+  {
+    "account_number": "ACC-10234",
+    "phone_number": "+15551234567",
+    "name": "Priya Natarajan",
+    "email": "priya.n@example.com",
+    "subscription_tier": "Premium Cloud Storage",
+    "subscription_status": "active",
+    "member_since": "2023-03-14",
+    "devices": [
+      {
+        "device_id": "THERM-001",
+        "type": "thermostat",
+        "name": "Living Room Thermostat",
+        "room": "Living Room",
+        "status": "online",
+        "installed_at": "2023-03-20",
+        "telemetry": {
+          "mode": "heat",
+          "target_temp_f": 70,
+          "current_temp_f": 69,
+          "humidity_pct": 42
+        }
+      },
+      {
+        "device_id": "CAM-002",
+        "type": "camera",
+        "name": "Front Door Camera",
+        "room": "Entryway",
+        "status": "online",
+        "installed_at": "2023-03-20",
+        "telemetry": {
+          "recording": true,
+          "cloud_storage_used_gb": 12.4,
+          "last_motion_event": "2026-07-19T18:42:00-07:00"
+        }
+      },
+      {
+        "device_id": "LOCK-003",
+        "type": "lock",
+        "name": "Front Door Lock",
+        "room": "Entryway",
+        "status": "online",
+        "installed_at": "2023-03-20",
+        "telemetry": {
+          "locked": true,
+          "battery_pct": 61
+        }
+      },
+      {
+        "device_id": "SENS-004",
+        "type": "sensor",
+        "name": "Garage Motion Sensor",
+        "room": "Garage",
+        "status": "offline",
+        "installed_at": "2023-06-02",
+        "telemetry": {
+          "battery_pct": 4,
+          "last_seen": "2026-07-17T09:12:00-07:00"
+        }
+      }
+    ]
+  },
+  {
+    "account_number": "ACC-58821",
+    "phone_number": "+15559876543",
+    "name": "Marcus Webb",
+    "email": "marcus.webb@example.com",
+    "subscription_tier": "Basic",
+    "subscription_status": "active",
+    "member_since": "2024-11-01",
+    "devices": [
+      {
+        "device_id": "THERM-010",
+        "type": "thermostat",
+        "name": "Hallway Thermostat",
+        "room": "Hallway",
+        "status": "online",
+        "installed_at": "2024-11-06",
+        "telemetry": {
+          "mode": "cool",
+          "target_temp_f": 72,
+          "current_temp_f": 74,
+          "humidity_pct": 38
+        }
+      },
+      {
+        "device_id": "CAM-011",
+        "type": "camera",
+        "name": "Backyard Camera",
+        "room": "Backyard",
+        "status": "online",
+        "installed_at": "2024-11-06",
+        "telemetry": {
+          "recording": true,
+          "cloud_storage_used_gb": 3.1,
+          "last_motion_event": "2026-07-18T07:03:00-07:00"
+        }
+      }
+    ]
+  },
+  {
+    "account_number": "ACC-30456",
+    "phone_number": "+15552468101",
+    "name": "Elena Vasquez",
+    "email": "elena.vasquez@example.com",
+    "subscription_tier": "Premium Cloud Storage",
+    "subscription_status": "past_due",
+    "member_since": "2022-09-08",
+    "devices": [
+      {
+        "device_id": "LOCK-020",
+        "type": "lock",
+        "name": "Side Door Lock",
+        "room": "Side Entrance",
+        "status": "online",
+        "installed_at": "2022-09-15",
+        "telemetry": {
+          "locked": false,
+          "battery_pct": 88
+        }
+      },
+      {
+        "device_id": "SENS-021",
+        "type": "sensor",
+        "name": "Basement Water Sensor",
+        "room": "Basement",
+        "status": "online",
+        "installed_at": "2022-09-15",
+        "telemetry": {
+          "battery_pct": 76,
+          "last_seen": "2026-07-20T06:00:00-07:00"
+        }
+      },
+      {
+        "device_id": "THERM-022",
+        "type": "thermostat",
+        "name": "Upstairs Thermostat",
+        "room": "Upstairs Hallway",
+        "status": "online",
+        "installed_at": "2022-09-15",
+        "telemetry": {
+          "mode": "off",
+          "target_temp_f": null,
+          "current_temp_f": 73,
+          "humidity_pct": 45
+        }
+      }
+    ]
+  }
+]

@@ -1,0 +1,34 @@
+{
+  "ACC-10234": [
+    {
+      "ticket_id": "TCK-4471",
+      "device_id": "SENS-004",
+      "issue": "Garage motion sensor going offline intermittently",
+      "resolution": "Replaced battery; advised that battery below 10% can cause the sensor to drop off Wi-Fi. Recommended proactive replacement.",
+      "status": "resolved",
+      "opened_date": "2026-05-02",
+      "closed_date": "2026-05-03"
+    }
+  ],
+  "ACC-58821": [],
+  "ACC-30456": [
+    {
+      "ticket_id": "TCK-3390",
+      "device_id": "LOCK-020",
+      "issue": "Side door lock unresponsive to app commands for ~10 minutes at a time",
+      "resolution": "Identified Wi-Fi router channel congestion; had customer move to a less congested 2.4GHz channel, issue did not recur during follow-up.",
+      "status": "resolved",
+      "opened_date": "2025-11-20",
+      "closed_date": "2025-11-22"
+    },
+    {
+      "ticket_id": "TCK-3391",
+      "device_id": null,
+      "issue": "Billing dispute over Premium Cloud Storage renewal charge",
+      "resolution": null,
+      "status": "open",
+      "opened_date": "2026-07-10",
+      "closed_date": null
+    }
+  ]
+}
