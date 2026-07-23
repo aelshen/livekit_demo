@@ -72,19 +72,44 @@ async def create_token(req: TokenRequest):
 
 @app.get("/api/logs/stream")
 async def stream_logs():
-    """Server-Sent Events tail of logs/trace.jsonl, starting from end-of-file."""
+    """Server-Sent Events tail of logs/trace.jsonl, starting from end-of-file.
+
+    Reopens the file if it gets deleted/recreated or truncated (e.g.
+    `scripts/view_trace.py --clear`, or a fresh trace.jsonl after a restart)
+    — otherwise a long-lived browser connection keeps reading from an
+    orphaned file handle and silently never sees another line.
+    """
 
     async def event_source():
         TRACE_FILE.parent.mkdir(exist_ok=True)
         TRACE_FILE.touch(exist_ok=True)
-        with open(TRACE_FILE) as f:
-            f.seek(0, os.SEEK_END)
+
+        f = open(TRACE_FILE)
+        f.seek(0, os.SEEK_END)
+        inode = os.fstat(f.fileno()).st_ino
+
+        try:
             while True:
                 line = f.readline()
                 if line:
                     yield f"data: {line.strip()}\n\n"
-                else:
-                    await asyncio.sleep(0.3)
+                    continue
+
+                try:
+                    current = os.stat(TRACE_FILE)
+                except FileNotFoundError:
+                    current = None
+
+                if current is None or current.st_ino != inode or current.st_size < f.tell():
+                    f.close()
+                    TRACE_FILE.touch(exist_ok=True)
+                    f = open(TRACE_FILE)
+                    inode = os.fstat(f.fileno()).st_ino
+                    continue
+
+                await asyncio.sleep(0.3)
+        finally:
+            f.close()
 
     return StreamingResponse(event_source(), media_type="text/event-stream")
 

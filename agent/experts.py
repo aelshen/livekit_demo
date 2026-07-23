@@ -21,13 +21,14 @@ OPENAI_API_KEY. See agent/main.py for the same fallback on STT/LLM/TTS.
 
 import json
 import os
+import time
 from dataclasses import dataclass
 
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
 from agent.mcp_client import MCP_SERVER_URL
-from agent.tracing import trace
+from agent.tracing import elapsed_ms, span_end, span_start, trace
 
 PROVIDER = "anthropic" if os.environ.get("ANTHROPIC_API_KEY") else "openai"
 EXPERT_MODEL = os.environ.get("EXPERT_MODEL") or (
@@ -123,6 +124,7 @@ async def run_expert(config: ExpertConfig, question: str, account_number: str | 
         prompt += f"\nThe caller's account number is {account_number}."
 
     trace("expert.start", expert=config.name, question=question, account_number=account_number, provider=PROVIDER, model=EXPERT_MODEL)
+    started = time.monotonic()
 
     async with streamablehttp_client(MCP_SERVER_URL) as (read, write, _):
         async with ClientSession(read, write) as session:
@@ -135,7 +137,7 @@ async def run_expert(config: ExpertConfig, question: str, account_number: str | 
                 answer = await _run_openai_loop(config, prompt, all_tools, session)
 
     answer = answer or f"The {config.name} couldn't reach a conclusive answer in time."
-    trace("expert.answer", expert=config.name, answer=answer)
+    trace("expert.answer", expert=config.name, answer=answer, duration_ms=elapsed_ms(started))
     return answer
 
 
@@ -144,13 +146,23 @@ async def _run_anthropic_loop(config: ExpertConfig, prompt: str, tools, session:
     claude_tools = [{"name": t.name, "description": t.description, "input_schema": t.inputSchema} for t in tools]
     messages = [{"role": "user", "content": prompt}]
 
-    for _ in range(MAX_TOOL_ITERATIONS):
+    for iteration in range(MAX_TOOL_ITERATIONS):
+        llm_started = time.monotonic()
+        llm_span = span_start("llm-expert", label=config.name)
         response = await client.messages.create(
             model=EXPERT_MODEL,
             max_tokens=1024,
             system=config.system_prompt,
             tools=claude_tools,
             messages=messages,
+        )
+        span_end(llm_span, duration_ms=elapsed_ms(llm_started))
+        trace(
+            "expert.llm_call",
+            expert=config.name,
+            iteration=iteration,
+            duration_ms=elapsed_ms(llm_started),
+            stop_reason=response.stop_reason,
         )
 
         if response.stop_reason != "tool_use":
@@ -162,9 +174,19 @@ async def _run_anthropic_loop(config: ExpertConfig, prompt: str, tools, session:
         for block in response.content:
             if block.type != "tool_use":
                 continue
+            tool_started = time.monotonic()
+            tool_span = span_start("tool", label=block.name)
             result = await session.call_tool(block.name, block.input)
+            span_end(tool_span, duration_ms=elapsed_ms(tool_started))
             result_text = "".join(c.text for c in result.content if c.type == "text")
-            trace("expert.tool_call", expert=config.name, tool=block.name, args=block.input, result=result_text)
+            trace(
+                "expert.tool_call",
+                expert=config.name,
+                tool=block.name,
+                args=block.input,
+                result=result_text,
+                duration_ms=elapsed_ms(tool_started),
+            )
             tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": result_text})
         messages.append({"role": "user", "content": tool_results})
 
@@ -185,13 +207,23 @@ async def _run_openai_loop(config: ExpertConfig, prompt: str, tools, session: Cl
         {"role": "user", "content": prompt},
     ]
 
-    for _ in range(MAX_TOOL_ITERATIONS):
+    for iteration in range(MAX_TOOL_ITERATIONS):
+        llm_started = time.monotonic()
+        llm_span = span_start("llm-expert", label=config.name)
         response = await client.chat.completions.create(
             model=EXPERT_MODEL,
             messages=messages,
             tools=openai_tools,
         )
+        span_end(llm_span, duration_ms=elapsed_ms(llm_started))
         message = response.choices[0].message
+        trace(
+            "expert.llm_call",
+            expert=config.name,
+            iteration=iteration,
+            duration_ms=elapsed_ms(llm_started),
+            stop_reason="tool_calls" if message.tool_calls else "stop",
+        )
 
         if not message.tool_calls:
             return message.content
@@ -200,9 +232,19 @@ async def _run_openai_loop(config: ExpertConfig, prompt: str, tools, session: Cl
 
         for tool_call in message.tool_calls:
             args = json.loads(tool_call.function.arguments or "{}")
+            tool_started = time.monotonic()
+            tool_span = span_start("tool", label=tool_call.function.name)
             result = await session.call_tool(tool_call.function.name, args)
+            span_end(tool_span, duration_ms=elapsed_ms(tool_started))
             result_text = "".join(c.text for c in result.content if c.type == "text")
-            trace("expert.tool_call", expert=config.name, tool=tool_call.function.name, args=args, result=result_text)
+            trace(
+                "expert.tool_call",
+                expert=config.name,
+                tool=tool_call.function.name,
+                args=args,
+                result=result_text,
+                duration_ms=elapsed_ms(tool_started),
+            )
             messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": result_text})
 
     return None

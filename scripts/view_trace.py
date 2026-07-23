@@ -12,6 +12,7 @@ Usage:
 
 import argparse
 import json
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -42,18 +43,36 @@ def main() -> None:
         print(f"No trace log yet at {TRACE_FILE} — run a call first.")
         return
 
-    with open(TRACE_FILE) as f:
-        for line in f:
-            print(format_line(line))
+    f = open(TRACE_FILE)
+    for line in f:
+        print(format_line(line))
 
-        if args.follow:
-            print("--- following, ctrl-c to stop ---")
-            while True:
-                line = f.readline()
-                if line:
-                    print(format_line(line))
-                else:
+    if args.follow:
+        print("--- following, ctrl-c to stop ---")
+        inode = os.fstat(f.fileno()).st_ino
+        while True:
+            line = f.readline()
+            if line:
+                print(format_line(line))
+                continue
+
+            # Reopen if the file was recreated/truncated (e.g. another
+            # --clear) — otherwise we'd keep reading a dead file forever.
+            try:
+                current = os.stat(TRACE_FILE)
+            except FileNotFoundError:
+                current = None
+
+            if current is None or current.st_ino != inode or current.st_size < f.tell():
+                f.close()
+                if current is None:
                     time.sleep(0.3)
+                    continue
+                f = open(TRACE_FILE)
+                inode = os.fstat(f.fileno()).st_ino
+                continue
+
+            time.sleep(0.3)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,9 @@
   --green: #3fb27f;
   --amber: #d9a441;
   --red: #d9534f;
+  --violet: #8b5cf6;
+  --cyan: #22b8cf;
+  --slate: #7c8798;
 }
 
 * {
@@ -26,6 +29,11 @@ body {
   display: grid;
   grid-template-columns: 280px 1fr;
   height: 100vh;
+  /* Without this, a tall-enough child (e.g. a long-running call's trace)
+     can grow the whole page past the viewport instead of scrolling inside
+     its own panel — every panel below scrolls internally via its own
+     overflow, this is the outer clamp that makes that actually take effect. */
+  overflow: hidden;
 }
 
 .sidebar {
@@ -82,13 +90,28 @@ body {
   min-height: 0;
 }
 
+.bottom-row {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 16px;
+  min-height: 0;
+}
+
 .call-panel,
-.trace-panel {
+.trace-panel,
+.timeline-panel {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 16px 20px;
+  /* Grid items default to min-height/min-width: auto, which lets their
+     content force the track larger than its fr share. min-height:0 was added
+     for the vertical axis (round 2); min-width:0 is the horizontal twin —
+     without it a long unwrapped trace line, or the timeline's own lane
+     labels + canvas, pins the track to its min-content width and squeezes the
+     sibling panel (trace collapsing / timeline refusing to shrink). */
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }
@@ -197,7 +220,50 @@ body {
   font-size: 13px;
 }
 
-.trace-panel h2 {
+.waveforms {
+  display: flex;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.waveform {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #0f1115;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+.waveform-label {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.waveform-canvas {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  display: block;
+}
+
+.dot.you {
+  background: var(--accent);
+}
+
+.dot.agent {
+  background: var(--green);
+}
+
+.trace-panel h2,
+.timeline-panel h2 {
   font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -212,8 +278,23 @@ body {
   font-weight: 400;
 }
 
+/* Continuously incrementing total-call-duration clock in the timeline header,
+   advanced every frame by the animation loop. */
+.timeline-clock {
+  float: right;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
 .trace-log {
   flex: 1;
+  min-height: 0;
+  min-width: 0;
   overflow-y: auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
@@ -224,10 +305,34 @@ body {
 }
 
 .trace-line {
+  /* pre-wrap keeps the pretty-printed JSON's own newlines; overflow-wrap:
+     anywhere is what actually breaks a long unbroken token (a tracking
+     number, a long carrier name, a base64-ish id) mid-string. Unlike
+     word-break: break-word, overflow-wrap: anywhere also shrinks the
+     element's min-content width, so a long line can't force the panel wider
+     than its grid track — the horizontal-overflow half of this bug. */
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
   border-bottom: 1px solid var(--border);
-  padding: 3px 0;
+  padding: 3px 6px;
+  border-radius: 4px;
+}
+
+/* Shared "arrived just now" pulse so the eye is drawn to the newest trace
+   line and the newest timeline block at the same moment — both fire off the
+   same SSE message, so watching the two panels reads as one synchronized
+   event rather than two unrelated updates. */
+@keyframes tracePulse {
+  from {
+    background: rgba(91, 141, 239, 0.28);
+  }
+  to {
+    background: transparent;
+  }
+}
+
+.trace-line.just-added {
+  animation: tracePulse 1.4s ease-out;
 }
 
 .trace-ts {
@@ -242,4 +347,252 @@ body {
 
 .trace-fields {
   color: var(--text);
+}
+
+/* Chronological left-to-right timeline: one lane per component, blocks
+   positioned by real elapsed time (not just proportional bars all starting
+   at zero) so it reads as an actual growing timeline of the call. */
+.timeline {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: row;
+  background: #0f1115;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.timeline-lane-labels {
+  flex: 0 0 130px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+}
+
+/* Spacer that reserves the same vertical band as the scrolling ruler, so the
+   six lane labels line up row-for-row with the six lanes in the canvas. */
+.timeline-lane-labels .lane-spacer {
+  flex: 0 0 22px;
+}
+
+.timeline-lane-labels .lane {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
+.timeline-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  position: relative;
+  /* Tracking is now done frame-by-frame by the rAF loop (the playhead advances
+     ~a few px per frame, which is already smooth), so `auto` here — CSS smooth
+     scrolling would fight the per-frame scrollLeft retargeting and lag behind. */
+  scroll-behavior: auto;
+}
+
+/* Growing-width scroll content: its width is set in JS to the furthest block's
+   right edge. Ruler + canvas are absolutely stretched across it (left/right:0)
+   so both share the exact same horizontal coordinate space and stay aligned as
+   it scrolls. */
+.timeline-track {
+  position: relative;
+  height: 100%;
+  min-width: 100%;
+}
+
+.timeline-ruler {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 22px;
+}
+
+.timeline-tick-label {
+  position: absolute;
+  top: 3px;
+  font-size: 10px;
+  color: var(--muted);
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+/* Vertical gridline dropping from the ruler down through every lane. */
+.timeline-gridline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.timeline-canvas {
+  position: absolute;
+  top: 22px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+/* Faint horizontal guide down the middle of each lane, so a slim block reads
+   as clearly sitting "in" its lane. */
+.timeline-lane-guide {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.timeline-block {
+  position: absolute;
+  height: 10px;
+  border-radius: 3px;
+  min-width: 2px;
+  cursor: default;
+}
+
+/* Live-incrementing ms counter (while running) that freezes to the segment's
+   authoritative duration on end. Sits just off the bar's right edge and
+   travels with it as the bar grows. */
+.timeline-block-label {
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-left: 4px;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--muted);
+  white-space: nowrap;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A bar that is currently growing: brighter fill + a gentle pulse so it reads
+   as "live work in progress", distinct from the settled completed bars. */
+@keyframes runningPulse {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.45);
+  }
+}
+
+.timeline-block.running {
+  opacity: 0.95;
+  animation: runningPulse 1.1s ease-in-out infinite;
+}
+
+.timeline-block.running .timeline-block-label {
+  color: var(--text);
+}
+
+.timeline-block.done {
+  opacity: 1;
+}
+
+@keyframes blockPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 7px rgba(255, 255, 255, 0);
+  }
+}
+
+.timeline-block.just-added {
+  animation: blockPulse 1.4s ease-out;
+}
+
+/* Vertical "now" playhead marking the current wall-clock moment, spanning the
+   ruler and all lanes. */
+.timeline-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  left: 0;
+  background: rgba(91, 141, 239, 0.45);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* STT is NOT a discrete step — it's LiveKit/Deepgram flushing ~5s of open-mic
+   audio-throughput every 5s regardless of whether anyone spoke (silence
+   included). Rendering it like the other blocks made it look like constant STT
+   work. Instead: a persistent faint baseline across the STT lane (the mic is
+   simply open the whole call) with a small low-opacity tick at each 5s
+   heartbeat — deliberately a different visual language from the real per-turn
+   blocks. */
+.stt-baseline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 1px dashed rgba(34, 184, 207, 0.35);
+}
+
+.timeline-heartbeat {
+  position: absolute;
+  width: 2px;
+  height: 12px;
+  background: var(--cyan);
+  opacity: 0.3;
+  border-radius: 1px;
+  cursor: default;
+}
+
+.dot.stt {
+  opacity: 0.4;
+}
+
+.timeline-block.llm-orch,
+.dot.llm-orch {
+  background: var(--accent);
+}
+
+.timeline-block.llm-expert,
+.dot.llm-expert {
+  background: var(--violet);
+}
+
+.timeline-block.tool,
+.dot.tool {
+  background: var(--green);
+}
+
+.dot.stt {
+  background: var(--cyan);
+}
+
+.timeline-block.tts,
+.dot.tts {
+  background: var(--amber);
+}
+
+.timeline-block.eou,
+.dot.eou {
+  background: var(--slate);
 }

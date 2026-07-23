@@ -23,12 +23,37 @@
           <button id="call-btn" disabled>Start Call</button>
           <span id="call-status" class="status">idle</span>
         </div>
+        <div class="waveforms">
+          <div class="waveform">
+            <span class="waveform-label"><span class="dot you"></span>You</span>
+            <canvas id="wave-you" class="waveform-canvas"></canvas>
+          </div>
+          <div class="waveform">
+            <span class="waveform-label"><span class="dot agent"></span>Agent</span>
+            <canvas id="wave-agent" class="waveform-canvas"></canvas>
+          </div>
+        </div>
       </section>
 
-      <section class="trace-panel">
-        <h2>Live trace <span class="trace-hint">(orchestrator delegations + expert tool calls)</span></h2>
-        <div id="trace-log" class="trace-log"></div>
-      </section>
+      <div class="bottom-row">
+        <section class="trace-panel">
+          <h2>Live trace <span class="trace-hint">(orchestrator delegations + expert tool calls)</span></h2>
+          <div id="trace-log" class="trace-log"></div>
+        </section>
+
+        <section class="timeline-panel">
+          <h2>Latency timeline <span class="trace-hint">(left to right = elapsed call time)</span><span id="timeline-clock" class="timeline-clock">0:00.0</span></h2>
+          <div class="timeline">
+            <div id="timeline-lane-labels" class="timeline-lane-labels"></div>
+            <div id="timeline-scroll" class="timeline-scroll">
+              <div id="timeline-track" class="timeline-track">
+                <div id="timeline-ruler" class="timeline-ruler"></div>
+                <div id="timeline-canvas" class="timeline-canvas"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
     </main>
   </div>
 

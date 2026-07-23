@@ -200,17 +200,44 @@ if you're using the Playground instead.
 ## Tracing / observability
 
 `agent/tracing.py` writes one JSON line per event to `logs/trace.jsonl`
-(plus a console line) for everything that happens *outside* LiveKit's own
-realtime pipeline — i.e. the actual multi-agent orchestration, which
-otherwise happens invisibly inside separate Anthropic/OpenAI API calls:
+(plus a console line) covering both the multi-agent orchestration *and* its
+latency. The demo console splits these into two panels side by side instead
+of one mixed feed, since narrative and timing don't read well interleaved:
 
-- `orchestrator.identify_customer` / `orchestrator.handoff` — the
-  Orchestrator's own two direct MCP calls.
-- `orchestrator.delegate` / `orchestrator.delegate_result` — every time the
-  Orchestrator hands a question to an expert, and what came back.
-- `expert.start` / `expert.tool_call` / `expert.answer` — inside each
-  expert's own bounded reasoning loop: which provider/model it used, every
-  tool it called with its arguments and result, and its final answer.
+**Live trace** (narrative — what happened): `orchestrator.identify_customer`,
+`orchestrator.delegate`/`delegate_result`, `orchestrator.handoff`,
+`expert.start`, `expert.tool_call` (name/args/result), `expert.answer` — who
+was asked what, which tools got called, what came back.
+
+**Latency timeline** (pure timing, rendered as a chronological, left-to-right
+lane chart — not just a list of proportional bars): one lane each for STT,
+LLM (orchestrator), TTS, turn-taking, LLM (expert), and tool calls.
+`metrics.stt` / `metrics.llm` / `metrics.tts` / `metrics.eou` are LiveKit's
+own per-component latency for the realtime voice pipeline (forwarded from
+`session.on("metrics_collected")`); `expert.llm_call` and `expert.tool_call`
+are each individual LLM call and MCP tool call inside an expert's reasoning
+loop, timed separately. Every block is positioned at its actual elapsed time
+since the first traced event (reconstructed as `ts - duration`, since a step
+is only traced once it finishes) and sized proportionally to its duration —
+so it reads as an actual growing timeline of the call, not a static list,
+and the panel auto-scrolls horizontally to keep the latest activity in view.
+This is what answers "is the LLM spending its time reasoning or
+tool-calling": the tool-call blocks are a visible sliver next to the
+LLM-call blocks (in practice, for this mock backend, ~5-15ms vs.
+~800-2500ms — the bottleneck is the model, not the tools).
+`expert.tool_call` is the one event that appears in both panels: it's both
+a real conversation step and a real timed step.
+
+Note on STT: LiveKit's `STTMetrics.duration` is documented as `0.0` if the
+STT is streaming, which Deepgram/OpenAI both are here — that's not a bug,
+the field just isn't meaningful for streaming STT. The STT lane uses
+`audio_duration_ms` instead (how much speech was captured); `metrics.eou`
+(end-of-utterance delay) is the closest available proxy for perceived
+STT-related turn-taking latency.
+
+Frontend logic lives in `frontend/static/app.js` (`TIMELINE_EVENTS` /
+`TIMELINE_ONLY_EVENTS` / `TIMELINE_LANES`) — both panels read the exact same
+SSE stream, they just render different events from it.
 
 View it with:
 ```bash
@@ -220,14 +247,6 @@ python scripts/view_trace.py --clear    # wipe it between demo runs
 ```
 
 `logs/` is git-ignored — it's a runtime artifact, not part of the app.
-
-This is deliberately separate from LiveKit's own session telemetry (STT/LLM/
-TTS/VAD latency metrics via `session.on("metrics_collected")`, or full
-OpenTelemetry export to LiveKit Cloud/Langfuse) — that covers the realtime
-voice pipeline itself, not the Orchestrator's delegation decisions or what
-each expert reasoned through, which is what this custom tracing is for. If
-you also want voice-pipeline latency metrics later, LiveKit's built-in
-telemetry is additive on top of this, not a replacement for it.
 
 ## Known issue: use headphones when testing
 
