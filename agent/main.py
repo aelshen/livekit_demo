@@ -28,6 +28,7 @@ Then run this worker in dev mode (connects to LiveKit Agents Playground):
     python -m agent.main dev
 """
 
+import asyncio
 import os
 import re
 import time
@@ -36,7 +37,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from livekit.agents import Agent, AgentSession, JobContext, RunContext, WorkerOptions, cli, function_tool
-from livekit.agents.voice.events import AgentStateChangedEvent, MetricsCollectedEvent
+from livekit.agents.voice.events import AgentFalseInterruptionEvent, AgentStateChangedEvent, MetricsCollectedEvent
 from livekit.plugins import anthropic, cartesia, deepgram, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
@@ -112,13 +113,23 @@ class Orchestrator(Agent):
         span = tracing.span_start("tts", label="TTS")
         started = time.monotonic()
         first = True
-        async for frame in Agent.default.tts_node(self, text, model_settings):
-            if first:
-                first = False
+        # try/finally (matching llm_node above) so the span closes exactly once
+        # no matter how the generator exits: normal exhaustion, an exception, or
+        # cancellation via GeneratorExit/CancelledError during async-generator
+        # cleanup — e.g. a genuine user barge-in interrupting the agent before
+        # the first audio frame is produced. Without this, a cancelled TTS
+        # request leaves the span open forever and the frontend bar grows to
+        # infinity. finally in an async generator runs during aclose()/GC
+        # cleanup (PEP 525), so this is the standard, safe pattern.
+        try:
+            async for frame in Agent.default.tts_node(self, text, model_settings):
+                if first:
+                    first = False
+                    tracing.span_end(span, duration_ms=elapsed_ms(started))
+                yield frame
+        finally:
+            if first:  # never reached the first frame; close the span once here
                 tracing.span_end(span, duration_ms=elapsed_ms(started))
-            yield frame
-        if first:  # no frames produced; close the span so it doesn't hang open
-            tracing.span_end(span, duration_ms=elapsed_ms(started))
 
     async def llm_node(self, chat_ctx, tools, model_settings):
         # Fires once per orchestrator turn, and again for each tool-call round
@@ -226,6 +237,24 @@ def _log_metrics(ev: MetricsCollectedEvent) -> None:
         trace("metrics.eou", end_of_utterance_delay_ms=round(m.end_of_utterance_delay * 1000))
 
 
+def _on_false_interruption(ev: AgentFalseInterruptionEvent) -> None:
+    """Direct evidence of the pause-then-resume behavior, instead of inferring
+    it from LLM/TTS timing gaps after the fact. Fires whenever VAD (mis)fired
+    a START_OF_SPEECH that never turned into real, confirmed speech — shows up
+    in the Live Trace panel like any other narrative event (not a duration, so
+    it isn't in TIMELINE_ONLY_EVENTS)."""
+    trace("agent.false_interruption", resumed=ev.resumed)
+
+
+# Upper bound (seconds) on how long we'll wait for the post-handoff farewell to
+# start + finish before ending the call anyway. Generous on purpose: the normal
+# path (farewell spoken, then a speaking->non-speaking transition) almost always
+# fires well within this, so the timeout only bites when the follow-up reply
+# never arrives at all (see below). Big enough not to clip a slow-but-real
+# farewell; small enough that a stuck call still ends on its own.
+_FAREWELL_FALLBACK_TIMEOUT_S = 14.0
+
+
 def _make_end_call_handler(session: "AgentSession[CallState]"):
     """Build the agent_state_changed handler that hangs up after a handoff.
 
@@ -233,23 +262,65 @@ def _make_end_call_handler(session: "AgentSession[CallState]"):
     closed the session, so the orchestrator kept getting re-invoked on every
     ambient-noise "turn" and regenerating a goodbye forever (the looping bug).
 
-    The signal that the farewell finished playing is a transition OUT of
-    "speaking". We fire on the first such transition after the flag is set — the
-    reply may pass through "speaking" more than once (multi-chunk generation),
-    so a one-shot guard ensures we shut down exactly once. `session.on` requires
-    a plain sync callback (it rejects coroutine functions), matching
-    _log_metrics; session.shutdown() is itself sync and schedules the close,
-    draining any in-flight speech first (drain=True default)."""
+    Two-phase gate. The signal that the farewell finished playing is a
+    transition OUT of "speaking" — BUT only if it belongs to the farewell.
+    Firing on any speaking-exit after the flag is set is wrong: a stray/residual
+    transition (e.g. the tail of a sentence that was interrupted right as the
+    handoff tool ran) can look identical and cut the call off before the
+    farewell is ever spoken (the "cuts off the farewell" bug). So we first wait
+    to positively observe the farewell *starting* — a transition INTO "speaking"
+    that happens after the flag is set — and only then treat the next exit from
+    "speaking" as "the farewell is done." A one-shot guard fires shutdown once.
+
+    Safety net. If the follow-up reply never generates at all — which really
+    happens: when a user barge-in leaves the pipeline interrupted at the moment
+    the handoff tool returns, LiveKit skips the post-tool-call reply (the
+    interrupted speech handle returns before producing any LLM/TTS), so no
+    "->speaking" transition ever arrives and the two-phase gate would otherwise
+    wait forever — a delayed fallback task ends the call after
+    _FAREWELL_FALLBACK_TIMEOUT_S. Both paths share the `ended` guard so whichever
+    fires first wins and the other no-ops; the fallback is armed exactly once,
+    the first time we see the flag set.
+
+    `session.on` requires a plain sync callback (it rejects coroutine
+    functions), matching _log_metrics; session.shutdown() is itself sync and
+    schedules the close, draining any in-flight speech first (drain=True
+    default)."""
     ended = False
+    farewell_started = False
+    fallback_armed = False
+
+    def _end_call(reason: str) -> None:
+        nonlocal ended
+        if ended:
+            return
+        ended = True
+        trace("orchestrator.call_ended", account_number=session.userdata.account_number, reason=reason)
+        session.shutdown()
+
+    async def _fallback() -> None:
+        await asyncio.sleep(_FAREWELL_FALLBACK_TIMEOUT_S)
+        # No-ops cleanly if the normal path already ended the call.
+        if not ended:
+            _end_call("fallback_timeout")
 
     def _on_agent_state_changed(ev: AgentStateChangedEvent) -> None:
-        nonlocal ended
+        nonlocal farewell_started, fallback_armed
         if ended or not session.userdata.should_end_call:
             return
+        # Arm the safety net once, the first time we observe the flag set, so a
+        # farewell that never arrives still degrades to "the call ends anyway".
+        if not fallback_armed:
+            fallback_armed = True
+            asyncio.create_task(_fallback())
+        # Phase 1: wait until we've seen the farewell actually start playing.
+        if not farewell_started:
+            if ev.new_state == "speaking":
+                farewell_started = True
+            return
+        # Phase 2: the first exit from "speaking" after that is the farewell end.
         if ev.old_state == "speaking" and ev.new_state != "speaking":
-            ended = True
-            trace("orchestrator.call_ended", account_number=session.userdata.account_number)
-            session.shutdown()
+            _end_call("farewell_finished")
 
     return _on_agent_state_changed
 
@@ -262,16 +333,30 @@ async def entrypoint(ctx: JobContext) -> None:
         stt=_select_stt(),
         llm=_select_llm(),
         tts=_select_tts(),
-        vad=silero.VAD.load(),
+        # activation_threshold raised from the library default (0.5): confirmed
+        # by reading livekit-agents' own audio_recognition.py that a raw VAD
+        # START_OF_SPEECH event alone is what pauses the agent's speech, before
+        # any "is this real" classification happens downstream. Reproduced live
+        # with the mic hardware-muted (so acoustic echo is ruled out) — VAD was
+        # still firing on the residual noise floor, causing the agent to pause
+        # mid-sentence and then resume in place a few seconds later once
+        # nothing coherent followed (the false_interruption_timeout window
+        # below). Raising this is the actual fix; the interruption-policy
+        # tuning below only ever handled what happens *after* VAD already
+        # (mis)fired, not the firing itself. If this ever makes the agent slow
+        # to notice genuine soft/quiet speech, come back down a bit — this is
+        # a real sensitivity/false-positive tradeoff, not a fixed constant.
+        vad=silero.VAD.load(activation_threshold=0.7),
         turn_handling={
             "turn_detection": MultilingualModel(),
-            # Defense against acoustic echo: without headphones, the agent's
-            # own TTS played through speakers can leak into the mic and get
-            # misread as the caller talking — the round trip is way longer
-            # than browser-native echo cancellation is designed to track, so
-            # it can't cancel it. This doesn't fix that (headphones do); it
-            # makes a stray echo blip less likely to register as a real
-            # interruption, and recovers cleanly when one slips through.
+            # Defense against a stray VAD misfire getting treated as a real
+            # interruption (a stronger mic-noise floor than expected, a breath,
+            # brief background noise — acoustic echo without headphones was one
+            # cause we found, but not the only one; see the VAD activation
+            # threshold above for the more fundamental fix). This doesn't
+            # prevent VAD from firing; it makes a misfire less likely to be
+            # treated as a real interruption, and recovers cleanly when one
+            # slips through anyway.
             "interruption": {
                 "mode": "adaptive",  # ML-based, not raw VAD energy
                 "min_words": 2,  # STT must have actually heard words
@@ -292,6 +377,7 @@ async def entrypoint(ctx: JobContext) -> None:
         },
     )
     session.on("metrics_collected", _log_metrics)
+    session.on("agent_false_interruption", _on_false_interruption)
 
     await session.start(agent=Orchestrator(), room=ctx.room)
 
