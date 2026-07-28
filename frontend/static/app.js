@@ -260,6 +260,12 @@ function attachWaveform(key, mediaStreamTrack) {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   if (audioCtx.state === "suspended") audioCtx.resume();
 
+  // Re-attaching (e.g. after a mic/device switch) — drop the old source first
+  // so it isn't left connected to a dead/replaced MediaStreamTrack.
+  if (wf.source) {
+    try { wf.source.disconnect(); } catch (_) {}
+  }
+
   const analyser = audioCtx.createAnalyser();
   analyser.fftSize = 1024;
   const src = audioCtx.createMediaStreamSource(new MediaStream([mediaStreamTrack]));
@@ -314,6 +320,17 @@ async function startCall() {
         // Tap the agent's audio for its waveform (playback stays via `el`).
         attachWaveform("agent", track.mediaStreamTrack);
       }
+    });
+
+    room.on(RoomEvent.ActiveDeviceChanged, (kind) => {
+      // Fires when the OS default input/output device changes (e.g. the
+      // caller switches mics, or unplugs/plugs a headset). LiveKit swaps the
+      // underlying MediaStreamTrack for the mic publication, but our "you"
+      // waveform had already grabbed a reference to the OLD track at call
+      // start and never re-read it — flatlining on switch was the bug.
+      if (kind !== "audioinput") return;
+      const micPub = room?.localParticipant.getTrackPublication(Track.Source.Microphone);
+      attachWaveform("you", micPub?.track?.mediaStreamTrack);
     });
 
     room.on(RoomEvent.Disconnected, () => {
