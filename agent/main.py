@@ -36,7 +36,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from livekit.agents import Agent, AgentSession, JobContext, RunContext, WorkerOptions, cli, function_tool
-from livekit.agents.voice.events import MetricsCollectedEvent
+from livekit.agents.voice.events import AgentStateChangedEvent, MetricsCollectedEvent
 from livekit.plugins import anthropic, cartesia, deepgram, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
@@ -83,6 +83,11 @@ def _select_tts():
 class CallState:
     account_number: str | None = None
     customer_info: dict | None = None
+    # Set by log_handoff_summary once a human handoff has been logged. The
+    # session isn't torn down here (the farewell hasn't been spoken yet at that
+    # point — see the agent_state_changed handler in entrypoint); this just arms
+    # the hang-up so it fires once the farewell finishes playing.
+    should_end_call: bool = False
 
 
 class Orchestrator(Agent):
@@ -197,6 +202,12 @@ class Orchestrator(Agent):
             },
         )
         trace("orchestrator.handoff", reason=reason, summary=summary, account_number=context.userdata.account_number)
+        # Arm the hang-up. We deliberately do NOT call session.shutdown() here:
+        # this tool runs BEFORE the LLM has generated (let alone spoken) the
+        # farewell, so shutting down now could resolve before any speech is in
+        # flight and cut the call off silently. The agent_state_changed handler
+        # in entrypoint() waits for the farewell to finish, then closes.
+        context.userdata.should_end_call = True
         return result
 
 
@@ -213,6 +224,34 @@ def _log_metrics(ev: MetricsCollectedEvent) -> None:
         trace("metrics.stt", duration_ms=round(m.duration * 1000), audio_duration_ms=round(m.audio_duration * 1000))
     elif m.type == "eou_metrics":
         trace("metrics.eou", end_of_utterance_delay_ms=round(m.end_of_utterance_delay * 1000))
+
+
+def _make_end_call_handler(session: "AgentSession[CallState]"):
+    """Build the agent_state_changed handler that hangs up after a handoff.
+
+    log_handoff_summary only sets userdata.should_end_call; nothing else ever
+    closed the session, so the orchestrator kept getting re-invoked on every
+    ambient-noise "turn" and regenerating a goodbye forever (the looping bug).
+
+    The signal that the farewell finished playing is a transition OUT of
+    "speaking". We fire on the first such transition after the flag is set — the
+    reply may pass through "speaking" more than once (multi-chunk generation),
+    so a one-shot guard ensures we shut down exactly once. `session.on` requires
+    a plain sync callback (it rejects coroutine functions), matching
+    _log_metrics; session.shutdown() is itself sync and schedules the close,
+    draining any in-flight speech first (drain=True default)."""
+    ended = False
+
+    def _on_agent_state_changed(ev: AgentStateChangedEvent) -> None:
+        nonlocal ended
+        if ended or not session.userdata.should_end_call:
+            return
+        if ev.old_state == "speaking" and ev.new_state != "speaking":
+            ended = True
+            trace("orchestrator.call_ended", account_number=session.userdata.account_number)
+            session.shutdown()
+
+    return _on_agent_state_changed
 
 
 async def entrypoint(ctx: JobContext) -> None:
@@ -237,13 +276,28 @@ async def entrypoint(ctx: JobContext) -> None:
                 "mode": "adaptive",  # ML-based, not raw VAD energy
                 "min_words": 2,  # STT must have actually heard words
                 "resume_false_interruption": True,  # already the default; explicit since it's exactly this scenario
-                "false_interruption_timeout": 2.0,
+                # How long to wait, after something gets flagged as a possible
+                # interruption (an echo blip, a breath, background noise), before
+                # giving up on real speech following and having the agent resume
+                # with something like "sorry about that, can you tell me...".
+                # The library default (2.0s) is tuned for quick back-and-forth,
+                # not for a caller pausing to think or go find an account/order
+                # number — that legitimately takes longer than 2s, and was
+                # getting misread as "nothing's coming" every time. Widened to
+                # give real thinking pauses room; the cost is a longer silent
+                # gap in the rarer case where it truly was just noise and the
+                # caller says nothing at all.
+                "false_interruption_timeout": 6.0,
             },
         },
     )
     session.on("metrics_collected", _log_metrics)
 
     await session.start(agent=Orchestrator(), room=ctx.room)
+
+    # End the call after a human handoff has been logged AND the farewell has
+    # actually finished being spoken (see _make_end_call_handler).
+    session.on("agent_state_changed", _make_end_call_handler(session))
 
     # If the demo console's customer picker started this call, the account is
     # already known — skip the identification step and greet by name.
